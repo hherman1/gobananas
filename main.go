@@ -34,9 +34,45 @@ func run() error {
 	ebiten.SetWindowSize(720, 480)
 	ebiten.SetWindowResizable(true)
 	var g Game
+	g.init()
+	return fmt.Errorf("run game: %w", ebiten.RunGame(&g))
+}
+
+type Game struct {
+	// width / height of screen
+	w, h int
+
+	world box2d.B2World
+
+	c Camera
+	p Player
+
+	// Level editor
+	e *Editor
+
+	// Entities to draw on each frame
+	entities []*Entity
+
+	// Number of evaluated ticks for timekeeping.
+	time int
+
+	// Keys that have been clicked and are still being held, preventing them from generating additional clicks.
+	down map[ebiten.Key]struct{}
+
+}
+
+// Resets the game to a clean initial state.
+func (g *Game) init() {
+	down := g.down
+	*g = Game{}
+	g.e = &Editor{g: g}
+	g.down = make(map[ebiten.Key]struct{})
+	if down != nil {
+		g.down = down
+	}
 	g.c = Camera{
-		hw: 60,
-		hh: 40,
+		hw: 180,
+		hh: 120,
 		x:  -60,
 		y:  -40,
 	}
@@ -65,49 +101,10 @@ func run() error {
 	g.p.b.CreateFixtureFromDef(&def)
 	g.p.b.SetUserData(&g.p)
 
-
 	// make a floor
-	floor := box2d.NewB2BodyDef()
-	floor.Position = box2d.B2Vec2{ X: 0, Y: 3,}
-
-	shape = box2d.MakeB2PolygonShape()
-	shape.SetAsBox(30, 5./2)
-	def = box2d.MakeB2FixtureDef()
-	def.Shape = &shape
-	def.Density = 1
-	def.Friction = 0.3
-	entity := Entity{
-		w: 60,
-		h: 5,
-		b: g.world.CreateBody(floor),
-		restoresJump: true,
-	}
-	entity.b.SetUserData(&entity)
-	g.entities = append(g.entities, &entity)
-	entity.b.CreateFixtureFromDef(&def)
-
-	return fmt.Errorf("run game: %w", ebiten.RunGame(&g))
+	g.e.addRect(0, 0, 100, 3)
 }
 
-type Game struct {
-	// width / height of screen
-	w, h int
-
-	world box2d.B2World
-
-	c Camera
-	p Player
-
-	entities []*Entity
-
-	// Number of evaluated ticks for timekeeping.
-	time int
-
-	// When you mouse dwon you start creating an entity and when you release you save it (making this nil).
-	creating *Entity
-	// The point that was initially clicked when creating the current entity
-	cpin box2d.B2Vec2
-}
 
 func (g *Game) BeginContact(contact box2d.B2ContactInterface) {
 	var p *Player
@@ -163,6 +160,30 @@ type Player struct {
 	hasJump bool
 	// used for jump cooldowns
 	lastJump int
+
+	// shooting cooldowns
+	lastShot int
+}
+
+// Gets the cursor's position in world coordinates
+func (g *Game) Cursor() (wx, wy float64) {
+	toWorld := g.ToScreen()
+	toWorld.Invert()
+	sx, sy := ebiten.CursorPosition()
+	wx, wy = toWorld.Apply(float64(sx), float64(sy))
+	return
+}
+
+// Returns true if a given k has just started to be pressed
+func (g *Game) Clicked(k ebiten.Key) bool {
+	if !ebiten.IsKeyPressed(k) {
+		return false
+	}
+	if _, ok := g.down[k]; ok {
+		return false
+	}
+	g.down[k] = struct{}{}
+	return true
 }
 
 func (g *Game) Update() error {
@@ -170,25 +191,50 @@ func (g *Game) Update() error {
 	for next := g.p.b.GetContactList(); next != nil; next = next.Next {
 		g.BeginContact(next.Contact)
 	}
-	if ebiten.IsKeyPressed(ebiten.KeyD) {
-		g.p.b.ApplyForceToCenter(box2d.B2Vec2{1000*60, 0}, true)
-	}
-	if ebiten.IsKeyPressed(ebiten.KeyA) {
-		g.p.b.ApplyForceToCenter(box2d.B2Vec2{-1000*60, 0}, true)
-	}
-	velocity := g.p.b.GetLinearVelocity()
-	if math.Abs(velocity.X) > 50 {
-		g.p.b.SetLinearVelocity(box2d.B2Vec2{50 * velocity.X / math.Abs(velocity.X), velocity.Y})
-	}
-	if ebiten.IsKeyPressed(ebiten.KeyW) {
-		if g.p.hasJump && g.time - g.p.lastJump > 30 {
-			g.p.b.ApplyForceToCenter(box2d.B2Vec2{0, 10000 * 60}, true)
-			g.p.lastJump = g.time
+	{
+		// update down map
+		for k, _ := range g.down {
+			if !ebiten.IsKeyPressed(k) {
+				delete(g.down, k)
+			}
 		}
-		g.p.hasJump = false
 	}
-	if ebiten.IsKeyPressed(ebiten.KeyE) {
-		g.p.b.SetTransform(box2d.B2Vec2{0, 20}, g.p.b.GetAngle())
+	{
+		// movement
+		velocity := g.p.b.GetLinearVelocity()
+		if ebiten.IsKeyPressed(ebiten.KeyD) && velocity.X < 50 {
+			g.p.b.ApplyForceToCenter(box2d.B2Vec2{1000*60, 0}, true)
+		}
+		if ebiten.IsKeyPressed(ebiten.KeyA) && velocity.X > -50 {
+			g.p.b.ApplyForceToCenter(box2d.B2Vec2{-1000*60, 0}, true)
+		}
+		if ebiten.IsKeyPressed(ebiten.KeyW) {
+			if g.p.hasJump && g.time - g.p.lastJump > 30 {
+				g.p.b.ApplyForceToCenter(box2d.B2Vec2{0, 10000 * 60}, true)
+				g.p.lastJump = g.time
+			}
+			g.p.hasJump = false
+		}
+		if ebiten.IsKeyPressed(ebiten.KeyE) {
+			g.p.b.SetTransform(box2d.B2Vec2{0, 20}, g.p.b.GetAngle())
+		}
+	}
+	{
+		// camera zoom
+		_, yoff := ebiten.Wheel()
+		if yoff != 0 {
+			g.c.hh *= math.Pow(0.98, yoff)
+			g.c.hw *= math.Pow(0.98, yoff)
+		}
+		if ebiten.IsKeyPressed(ebiten.KeySpace) {
+			if ebiten.IsKeyPressed(ebiten.KeyShift) {
+				g.c.hw *= 0.99
+				g.c.hh *= 0.99
+			} else {
+				g.c.hw *= 1.01
+				g.c.hh *= 1.01
+			}
+		}
 	}
 	// have camera approach player
 	{
@@ -196,65 +242,65 @@ func (g *Game) Update() error {
 		g.c.x += 0.1 * (position.X - g.c.x)
 		g.c.y += 0.1 * (position.Y - g.c.y)
 	}
+	{
+		// camera pan
+		if ebiten.IsKeyPressed(ebiten.KeyRight) {
+			g.c.x++
+		}
+		if ebiten.IsKeyPressed(ebiten.KeyLeft) {
+			g.c.x--
+		}
+		if ebiten.IsKeyPressed(ebiten.KeyUp) {
+			g.c.y++
+		}
+		if ebiten.IsKeyPressed(ebiten.KeyDown) {
+			g.c.y--
+		}
+	}
+	{
+		// shooting
+		if ebiten.IsMouseButtonPressed(ebiten.MouseButtonRight) && g.time - g.p.lastShot > 30 {
+			// fire away
+			g.p.lastShot = g.time
+			wx, wy := g.Cursor()
+			pos := g.p.b.GetPosition()
 
-	if ebiten.IsKeyPressed(ebiten.KeyRight) {
-		g.c.x++
-	}
-	if ebiten.IsKeyPressed(ebiten.KeyLeft) {
-		g.c.x--
-	}
-	if ebiten.IsKeyPressed(ebiten.KeyUp) {
-		g.c.y++
-	}
-	if ebiten.IsKeyPressed(ebiten.KeyDown) {
-		g.c.y--
-	}
-	if ebiten.IsKeyPressed(ebiten.KeySpace) {
-		if ebiten.IsKeyPressed(ebiten.KeyShift) {
-			g.c.hw *= 0.99
-			g.c.hh *= 0.99
-		} else {
-			g.c.hw *= 1.01
-			g.c.hh *= 1.01
-		}
-	}
-	if ebiten.IsMouseButtonPressed(ebiten.MouseButtonLeft) {
-		toWorld := g.ToScreen()
-		toWorld.Invert()
-		sx, sy := ebiten.CursorPosition()
-		wx, wy := toWorld.Apply(float64(sx), float64(sy))
-		if g.creating == nil {
-			// make a floor
+			force := box2d.B2Vec2{wx - pos.X, wy - pos.Y}
+			force.Normalize()
+			force.OperatorScalarMulInplace(5)
+
+			// Spawn bullet
 			body := box2d.NewB2BodyDef()
-			body.Position = box2d.B2Vec2{X: wx, Y: wy}
-			g.creating = &Entity{
-				w:            0,
-				h:            0,
+			body.Position = box2d.B2Vec2{pos.X + force.X, pos.Y + force.Y}
+			body.Type = box2d.B2BodyType.B2_dynamicBody
+			e := &Entity{
+				w:            2,
+				h:            2,
 				b:            g.world.CreateBody(body),
-				restoresJump: true,
+				restoresJump: false,
 			}
-			g.creating.b.SetUserData(g.creating)
-			g.cpin = body.Position
-			g.entities = append(g.entities, g.creating)
+			e.b.SetUserData(e)
+			g.entities = append(g.entities, e)
+			shape := box2d.MakeB2PolygonShape()
+			shape.SetAsBox(1, 1)
+			def := box2d.MakeB2FixtureDef()
+			def.Shape = &shape
+			def.Density = 1
+			def.Friction = 0.3
+			def.Restitution = 0.7
+			e.b.CreateFixtureFromDef(&def)
+
+			force.OperatorScalarMulInplace(100 * 60)
+			e.b.ApplyForceToCenter(force, true)
+			force.OperatorScalarMulInplace(-100)
+			g.p.b.ApplyForceToCenter(force, true)
 		}
-		minx := math.Min(wx, g.cpin.X)
-		maxx := math.Max(wx, g.cpin.X)
-		miny := math.Min(wy, g.cpin.Y)
-		maxy := math.Max(wy, g.cpin.Y)
-		g.creating.w = maxx - minx
-		g.creating.h = maxy - miny
-		g.creating.b.M_xf.P = box2d.B2Vec2{(maxx + minx)/2, (maxy + miny)/2}
 	}
-	if !ebiten.IsMouseButtonPressed(ebiten.MouseButtonLeft) && g.creating != nil {
-		shape := box2d.MakeB2PolygonShape()
-		shape.SetAsBox(g.creating.w/2, g.creating.h/2)
-		def := box2d.MakeB2FixtureDef()
-		def.Shape = &shape
-		def.Density = 1
-		def.Friction = 0.3
-		g.creating.b.CreateFixtureFromDef(&def)
-		g.creating = nil
+	err := g.e.Update()
+	if err != nil {
+		return fmt.Errorf("editing: %w", err)
 	}
+
 	if ebiten.IsKeyPressed(ebiten.KeyEscape) {
 		return fmt.Errorf("escape pressed")
 	}
@@ -308,7 +354,9 @@ func (g *Game) Draw(screen *ebiten.Image) {
 	for _, e := range g.entities {
 		geo := ebiten.GeoM{}
 		position := e.b.GetPosition()
-		geo.Translate(position.X-e.w/2, position.Y-e.h/2)
+		geo.Translate(-e.w/2, -e.h/2)
+		geo.Rotate(e.b.GetAngle())
+		geo.Translate(position.X, position.Y)
 		geo.Concat(screenTransform)
 		velocity = e.b.GetLinearVelocity()
 		vertices, is := rect(0, 0, float32(e.w), float32(e.h), color.RGBA{})
