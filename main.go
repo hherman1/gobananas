@@ -3,6 +3,7 @@ package main
 import (
 	_ "embed"
 	"fmt"
+	"github.com/ByteArena/box2d"
 	"github.com/hajimehoshi/ebiten/v2"
 	"github.com/hajimehoshi/ebiten/v2/ebitenutil"
 	"image/color"
@@ -36,16 +37,18 @@ func run() error {
 	var a App
 	a.g = NewGame()
 	a.e = &Editor{
-		level: Level{Platforms: []*Block{
+		l: Level{Platforms: []*Block{
 			{
 				W: 100,
 				H: 0.5,
-				X: 0,
-				Y: 0,
+				Pos: box2d.B2Vec2{
+					X: 0,
+					Y: 0,
+				},
 			},
 		}},
 	}
-	a.e.level.apply(a.g)
+	a.e.l.apply(a.g)
 	return fmt.Errorf("run game: %w", ebiten.RunGame(&a))
 }
 
@@ -93,7 +96,7 @@ func (a *App) edit() {
 func (a *App) play() {
 	if a.mode == gedit {
 		a.g = NewGame()
-		a.e.level.apply(a.g)
+		a.e.l.apply(a.g)
 	}
 	a.mode = gplay
 }

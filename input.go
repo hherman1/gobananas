@@ -1,12 +1,22 @@
 package main
 
-import "github.com/hajimehoshi/ebiten/v2"
+import (
+	"github.com/ByteArena/box2d"
+	"github.com/hajimehoshi/ebiten/v2"
+)
 
+
+// The current position and change since last frame of a point.
+type drag struct {
+	pos box2d.B2Vec2
+	delta box2d.B2Vec2
+}
 
 // Global, single threaded maps for easier input consumption
 var (
 	kdown = make(map[ebiten.Key]int)
 	mdown = make(map[ebiten.MouseButton]int)
+	mdrag = make(map[ebiten.MouseButton]drag)
 	iframe = 1
 )
 
@@ -20,6 +30,22 @@ func InputsUpdate() {
 	for m := range mdown {
 		if !ebiten.IsMouseButtonPressed(m) {
 			delete(mdown, m)
+		}
+	}
+	for m, d := range mdrag {
+		if !ebiten.IsMouseButtonPressed(m) {
+			delete(mdrag, m)
+		}
+		x, y := ebiten.CursorPosition()
+		mdrag[m] = drag{
+			pos:   box2d.B2Vec2{
+				X: float64(x),
+				Y: float64(y),
+			},
+			delta: box2d.B2Vec2{
+				X: float64(x) - d.pos.X,
+				Y: float64(y) - d.pos.Y,
+			},
 		}
 	}
 }
@@ -45,14 +71,34 @@ func MouseClicked(m ebiten.MouseButton) bool {
 	if !ebiten.IsMouseButtonPressed(m) {
 		return false
 	}
-	f, om := mdown[m]
+	f, ok := mdown[m]
 	if f == iframe {
 		return true
 	}
-	if om {
+	if ok {
 		return false
 	}
 	mdown[m] = iframe
 	return true
+}
+
+// Reports the distance the mouse button was dragged since last frame in pixels.
+func MouseDrag(m ebiten.MouseButton) box2d.B2Vec2 {
+	if !ebiten.IsMouseButtonPressed(m) {
+		return box2d.B2Vec2{}
+	}
+	d, ok := mdrag[m]
+	if !ok {
+		x, y := ebiten.CursorPosition()
+		mdrag[m] = drag{
+			pos:   box2d.B2Vec2{
+				X: float64(x),
+				Y: float64(y),
+			},
+			delta: box2d.B2Vec2{},
+		}
+		return box2d.B2Vec2{}
+	}
+	return d.delta
 }
 

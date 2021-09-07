@@ -15,15 +15,21 @@ import (
 type emode int
 
 const (
+	// Add and edit new platforms
 	eplatforms emode = iota
+	// Move the players spawn
+	espawn
+	emax
 )
 
-var emodes = []emode{eplatforms}
+var emodes = []emode{eplatforms, espawn}
 
 func (e emode) String() string {
 	switch e {
 	case eplatforms:
 		return "Platforms"
+	case espawn:
+		return "Edit Spawn"
 	}
 	return "Unknown"
 }
@@ -39,7 +45,7 @@ type Editor struct {
 	cpiny float64
 
 	// The actual level
-	level Level
+	l Level
 
 	// Current editing mode.
 	emode emode
@@ -50,10 +56,13 @@ func (e *Editor) Layout(outsideWidth, outsideHeight int) (screenWidth, screenHei
 }
 
 // Format of objects in saved levels
-type Block struct {W float64; H float64; X float64; Y float64} // width, heigh, center in world coordinates
+type Block struct {W float64; H float64; Pos box2d.B2Vec2} // width, heigh, center in world coordinates
 
 // Struct used for editing, saving, and loading levels
 type Level struct {
+	// Where does the player spawn in the level
+	Spawn box2d.B2Vec2
+	// All the platforms in the physics world
 	Platforms []*Block
 }
 // Saves the level design to the given path
@@ -89,10 +98,11 @@ func (l *Level) load(path string) error {
 
 // Adds the contents of this level to a given game world
 func (l Level) apply(g *Game) {
+	g.p.b.SetTransform(l.Spawn, 0)
 	for _, p := range l.Platforms {
 		// make a body
 		body := box2d.NewB2BodyDef()
-		body.Position = box2d.B2Vec2{ X: p.X, Y: p.Y,}
+		body.Position = box2d.B2Vec2{ X: p.Pos.X, Y: p.Pos.Y,}
 
 		shape := box2d.MakeB2PolygonShape()
 		hw := p.W / 2
@@ -117,7 +127,7 @@ func (l Level) apply(g *Game) {
 // Run a single tick of editing updates
 func (e *Editor) Update() error {
 	{
-		// camera zoom
+		// camera controls
 		_, yoff := ebiten.Wheel()
 		if yoff != 0 {
 			e.c.hh *= math.Pow(0.98, yoff)
@@ -132,50 +142,76 @@ func (e *Editor) Update() error {
 				e.c.hh *= 1.01
 			}
 		}
+		d := MouseDrag(ebiten.MouseButtonRight)
+		if d != (box2d.B2Vec2{}) {
+			geo := ebiten.GeoM{}
+			geo.Scale(1/(2*e.c.hw), 1/(2*e.c.hh))
+			geo.Scale(-1, 1)
+			geo.Scale(float64(e.c.sw), float64(e.c.sh))
+			geo.Invert()
+			cx, cy := geo.Apply(d.X, d.Y)
+			e.c.x += cx
+			e.c.y += cy
+		}
+		if !ebiten.IsKeyPressed(ebiten.KeyMeta) {
+			if ebiten.IsKeyPressed(ebiten.KeyA) {
+				e.c.x -= 3
+			}
+			if ebiten.IsKeyPressed(ebiten.KeyD) {
+				e.c.x += 3
+			}
+			if ebiten.IsKeyPressed(ebiten.KeyW) {
+				e.c.y += 3
+			}
+			if ebiten.IsKeyPressed(ebiten.KeyS) {
+				e.c.y -= 3
+			}
+		}
 	}
 	// save/load level
-	if Clicked(ebiten.KeyS) && ebiten.IsKeyPressed(ebiten.KeyMeta){
-		err := e.level.save("created.lvl")
-		if err != nil {
-			return fmt.Errorf("save created.lvl: %w", err)
+	{
+		if Clicked(ebiten.KeyS) && ebiten.IsKeyPressed(ebiten.KeyMeta){
+			err := e.l.save("created.lvl")
+			if err != nil {
+				return fmt.Errorf("save created.lvl: %w", err)
+			}
+			fmt.Println("saved")
 		}
-		fmt.Println("saved")
-	}
-	if Clicked(ebiten.KeyL) && ebiten.IsKeyPressed(ebiten.KeyMeta){
-		err := e.level.load("created.lvl")
-		if err != nil {
-			return fmt.Errorf("load created.lvl: %w")
+		if Clicked(ebiten.KeyL) && ebiten.IsKeyPressed(ebiten.KeyMeta){
+			err := e.l.load("created.lvl")
+			if err != nil {
+				return fmt.Errorf("load created.lvl: %w")
+			}
 		}
 	}
+	// switch mode
+	{
+		if Clicked(ebiten.KeyUp) && e.emode > 0 {
+			e.emode--
+		}
+		if Clicked(ebiten.KeyDown) && e.emode < emax - 1 {
+			e.emode++
+		}
+	}
+	// reset
 	if Clicked(ebiten.KeyR) {
-		e.level = Level{}
+		e.l = Level{}
 		return nil
-	}
-	if !ebiten.IsKeyPressed(ebiten.KeyMeta) {
-		if ebiten.IsKeyPressed(ebiten.KeyA) {
-			e.c.x -= 3
-		}
-		if ebiten.IsKeyPressed(ebiten.KeyD) {
-			e.c.x += 3
-		}
-		if ebiten.IsKeyPressed(ebiten.KeyW) {
-			e.c.y += 3
-		}
-		if ebiten.IsKeyPressed(ebiten.KeyS) {
-			e.c.y -= 3
-		}
 	}
 
 	// platform editing
-	if e.emode == eplatforms {
+	switch e.emode {
+	case eplatforms:
 		if ebiten.IsMouseButtonPressed(ebiten.MouseButtonLeft) {
 			wx, wy := e.c.Cursor()
 			if e.creating == nil {
 				e.creating = &Block{
 					W: 0,
 					H: 0,
-					X: wx,
-					Y: wy,
+					Pos: box2d.B2Vec2{
+						X: wx,
+						Y: wy,
+					},
 				}
 				e.cpinx = wx
 				e.cpiny = wy
@@ -186,12 +222,17 @@ func (e *Editor) Update() error {
 			maxy := math.Max(wy, e.cpiny)
 			e.creating.W = maxx - minx
 			e.creating.H = maxy - miny
-			e.creating.X = (maxx + minx)/2
-			e.creating.Y = (maxy + miny)/2
+			e.creating.Pos.X = (maxx + minx)/2
+			e.creating.Pos.Y = (maxy + miny)/2
 		}
 		if !ebiten.IsMouseButtonPressed(ebiten.MouseButtonLeft) && e.creating != nil {
-			e.level.Platforms = append(e.level.Platforms, e.creating)
+			e.l.Platforms = append(e.l.Platforms, e.creating)
 			e.creating = nil
+		}
+	case espawn:
+		if ebiten.IsMouseButtonPressed(ebiten.MouseButtonLeft) {
+			wx, wy := e.c.Cursor()
+			e.l.Spawn = box2d.B2Vec2{X: wx, Y: wy}
 		}
 	}
 	return nil
@@ -201,7 +242,7 @@ func (e *Editor) drawBlock(screen *ebiten.Image, block *Block) {
 	screenTransform := e.c.ToScreen()
 	geo := ebiten.GeoM{}
 	geo.Translate(-block.W/2, -block.H/2)
-	geo.Translate(block.X, block.Y)
+	geo.Translate(block.Pos.X, block.Pos.Y)
 	geo.Concat(screenTransform)
 	vertices, is := rect(0, 0, float32(block.W), float32(block.H), color.RGBA{})
 	for i, v := range vertices {
@@ -218,10 +259,11 @@ func (e *Editor) drawBlock(screen *ebiten.Image, block *Block) {
 		Images:        [4]*ebiten.Image{},
 	})
 
+
 }
 
 func (e *Editor) Draw(screen *ebiten.Image) {
-	for _, entity := range e.level.Platforms {
+	for _, entity := range e.l.Platforms {
 		e.drawBlock(screen, entity)
 	}
 	if e.creating != nil {
@@ -234,4 +276,9 @@ func (e *Editor) Draw(screen *ebiten.Image) {
 		}
 		ebitenutil.DebugPrintAt(screen, str, 10, 30 + 10*i)
 	}
+	// player spawn
+	screenTransform := e.c.ToScreen()
+	ssx, ssy := screenTransform.Apply(e.l.Spawn.X, e.l.Spawn.Y)
+	ebitenutil.DrawLine(screen, ssx - 10, ssy - 10, ssx + 10, ssy + 10, color.White)
+	ebitenutil.DrawLine(screen, ssx - 10, ssy + 10, ssx + 10, ssy - 10, color.White)
 }
