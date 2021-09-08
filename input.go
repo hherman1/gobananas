@@ -5,7 +5,6 @@ import (
 	"github.com/hajimehoshi/ebiten/v2"
 )
 
-
 // The current position and change since last frame of a point.
 type drag struct {
 	pos box2d.B2Vec2

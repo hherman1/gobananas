@@ -28,6 +28,9 @@ type Game struct {
 	// Entities to draw on each frame
 	entities []*Entity
 
+	// Fully loaded art for rendering
+	art []*Art
+
 	// Number of evaluated ticks for timekeeping.
 	time int
 }
@@ -256,6 +259,18 @@ func (g *Game) Draw(screen *ebiten.Image) {
 		//		"Vy": float32(velocity.Y),
 		//	},
 		//})
+	}
+
+	for _, a := range g.art {
+		// unflip the images
+		var geo ebiten.GeoM
+		w, h := a.img.Size()
+		geo.Translate(-float64(w)/2, -float64(h)/2)
+		geo.Scale(a.Scale.X, a.Scale.Y)
+		geo.Scale(1, -1)
+		geo.Translate(a.Pos.X, a.Pos.Y)
+		geo.Concat(screenTransform)
+		screen.DrawImage(a.img, &ebiten.DrawImageOptions{GeoM: geo})
 	}
 }
 

@@ -3,17 +3,14 @@ package main
 import (
 	_ "embed"
 	"fmt"
-	"github.com/ByteArena/box2d"
 	"github.com/hajimehoshi/ebiten/v2"
 	"github.com/hajimehoshi/ebiten/v2/ebitenutil"
 	"image/color"
 	"log"
-	"strings"
 )
 
-//go:embed main_shader.go
-var mainShaderRaw []byte
 var mainShader *ebiten.Shader
+var outlineShader *ebiten.Shader
 
 
 // World units: Increasing Y is moving up in the world.
@@ -27,78 +24,51 @@ func main() {
 
 func run() error {
 	var err error
-	mainShader, err = ebiten.NewShader(mainShaderRaw)
+	mainShader, err = Shader("shaders/main_shader.go")
 	if err != nil {
 		return fmt.Errorf("loading main shader: %w", err)
+	}
+	outlineShader, err = Shader("shaders/outline_shader.go")
+	if err != nil {
+		return fmt.Errorf("loading outline shader: %w", err)
 	}
 
 	ebiten.SetWindowSize(720, 480)
 	ebiten.SetWindowResizable(true)
-	var a App
-	a.g = NewGame()
-	a.e = &Editor{
-		l: Level{Platforms: []*Block{
-			{
-				W: 100,
-				H: 0.5,
-				Pos: box2d.B2Vec2{
-					X: 0,
-					Y: 0,
-				},
-			},
-		}},
+	r := Root{NewEditor()}
+	return fmt.Errorf("run game: %w", ebiten.RunGame(&r))
+}
+
+// The root is a wrapper that implements the game interface and allows games to rewrap themselves to promote a new
+// leader game.
+type Root struct {
+	a App
+}
+
+func (r *Root) Update() error {
+	// Universal updates
+	InputsUpdate()
+	// Circumvent keyboard disabling
+	if ebiten.IsKeyPressed(ebiten.KeyEscape) {
+		return fmt.Errorf("escape pressed")
 	}
-	a.e.l.apply(a.g)
-	return fmt.Errorf("run game: %w", ebiten.RunGame(&a))
+	return r.a.Update(r)
 }
 
-type gmode int
-const (
-	gplay gmode = iota
-	gedit
-)
-
-func (g gmode) String() string {
-	switch g {
-	case gedit:
-		return "Edit"
-	case gplay:
-		return "Play"
-	}
-	return "Unknown"
+func (r *Root) Draw(screen *ebiten.Image) {
+	r.a.Draw(screen)
 }
 
-type App struct {
-	// Level editor
-	e *Editor
-	// Current game instance
-	g *Game
-	// Current engine mode
-	mode gmode
+func (r *Root) Layout(outsideWidth, outsideHeight int) (screenWidth, screenHeight int) {
+	return r.a.Layout(outsideWidth, outsideHeight)
 }
 
-func (a *App) Layout(outsideWidth, outsideHeight int) (screenWidth, screenHeight int) {
-	switch a.mode {
-	case gplay:
-		return a.g.Layout(outsideWidth, outsideHeight)
-	case gedit:
-		return a.e.Layout(outsideWidth, outsideHeight)
-	}
-	return outsideWidth, outsideHeight
-}
-
-// switch to edit mode
-func (a *App) edit() {
-	a.mode = gedit
-}
-
-// switch to play mode
-func (a *App) play() {
-	if a.mode == gedit {
-		a.g = NewGame()
-		a.e.l.apply(a.g)
-	}
-	a.mode = gplay
+// An app is a composable runtime for ebiten that can manipulate the world state. It is identical to ebiten.Game
+// except Update receives a reference to the root game interface so that the top level app can be exchanged
+type App interface {
+	Layout(outsideWidth, outsideHeight int) (screenWidth, screenHeight int)
+	Update(r *Root) error
+	Draw(screen *ebiten.Image)
 }
 
 type Camera struct {
@@ -144,54 +114,31 @@ func (c *Camera) Cursor() (wx, wy float64) {
 	return
 }
 
-func (a *App) Update() error {
-	// Universal updates
-	InputsUpdate()
-	{
-		// mode switches
-		if Clicked(ebiten.KeyE) {
-			a.edit()
-			return nil
-		}
-		if Clicked(ebiten.KeyP) {
-			a.play()
-			return nil
-		}
-	}
-	if ebiten.IsKeyPressed(ebiten.KeyEscape) {
-		return fmt.Errorf("escape pressed")
-	}
+// An admin app that wraps the game and exposes shortcuts for swapping into other tools
+type Admin struct {
+	// Current game instance
+	g *Game
+}
 
-	// Play mode updates
-	if a.mode == gplay {
-		err := a.g.Update()
-		if err != nil {
-			return fmt.Errorf("playing: %w", err)
-		}
-	} else if a.mode == gedit {
-		// edit mode updates
-		err := a.e.Update()
-		if err != nil {
-			return fmt.Errorf("editing: %w", err)
-		}
-	}
+func (a *Admin) Layout(outsideWidth, outsideHeight int) (screenWidth, screenHeight int) {
+	return a.g.Layout(outsideWidth, outsideHeight)
+}
 
+func (a *Admin) Update(r *Root) error {
+	if Clicked(ebiten.KeyE) {
+		r.a = NewEditor()
+		return r.a.Update(r)
+	}
+	err := a.g.Update()
+	if err != nil {
+		return fmt.Errorf("playing: %w", err)
+	}
 	return nil
 }
 
-func (a *App) Draw(screen *ebiten.Image) {
-
-	if a.mode == gplay {
-		a.g.Draw(screen)
-	} else if a.mode == gedit {
-		a.e.Draw(screen)
-	}
-
-	var str strings.Builder
-	str.WriteString("Mode: ")
-	str.WriteString(a.mode.String())
-	str.WriteString(" - (e) Edit; (p) Play")
-	ebitenutil.DebugPrintAt(screen, str.String(), 10, 10)
+func (a *Admin) Draw(screen *ebiten.Image) {
+	a.g.Draw(screen)
+	ebitenutil.DebugPrintAt(screen, "(E) Edit Mode", 10, 10)
 }
 
 
@@ -249,5 +196,4 @@ func rect(x, y, w, h float32, clr color.RGBA) ([]ebiten.Vertex, []uint16) {
 		},
 	}, []uint16{0, 1, 2, 1, 2, 3}
 }
-
 

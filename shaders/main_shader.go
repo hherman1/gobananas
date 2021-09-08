@@ -1,7 +1,7 @@
 //go:build ignore
 // +build ignore
 
-package main
+package shaders
 
 var Time float
 var Cursor vec2
