@@ -2,16 +2,44 @@ package main
 
 import (
 	_ "embed"
+	"encoding/binary"
 	"fmt"
 	"github.com/hajimehoshi/ebiten/v2"
 	"github.com/hajimehoshi/ebiten/v2/ebitenutil"
 	"image/color"
 	"log"
+	"math"
 )
 
 var mainShader *ebiten.Shader
 var outlineShader *ebiten.Shader
 
+
+// Serializable wrapper around ebiten's matrix transform type.
+type Mx struct {
+	ebiten.GeoM
+}
+
+func (m *Mx) GobDecode(bytes []byte) error {
+	m.SetElement(0, 0, math.Float64frombits(binary.BigEndian.Uint64(bytes[8*0:])))
+	m.SetElement(0, 1, math.Float64frombits(binary.BigEndian.Uint64(bytes[8*1:])))
+	m.SetElement(0, 2, math.Float64frombits(binary.BigEndian.Uint64(bytes[8*2:])))
+	m.SetElement(1, 0, math.Float64frombits(binary.BigEndian.Uint64(bytes[8*3:])))
+	m.SetElement(1, 1, math.Float64frombits(binary.BigEndian.Uint64(bytes[8*4:])))
+	m.SetElement(1, 2, math.Float64frombits(binary.BigEndian.Uint64(bytes[8*5:])))
+	return nil
+}
+
+func (m Mx) GobEncode() ([]byte, error) {
+	var out [8*6]byte
+	binary.BigEndian.PutUint64(out[8*0:], math.Float64bits(m.Element(0, 0)))
+	binary.BigEndian.PutUint64(out[8*1:], math.Float64bits(m.Element(0, 1)))
+	binary.BigEndian.PutUint64(out[8*2:], math.Float64bits(m.Element(0, 2)))
+	binary.BigEndian.PutUint64(out[8*3:], math.Float64bits(m.Element(1, 0)))
+	binary.BigEndian.PutUint64(out[8*4:], math.Float64bits(m.Element(1, 1)))
+	binary.BigEndian.PutUint64(out[8*5:], math.Float64bits(m.Element(1, 2)))
+	return out[:], nil
+}
 
 // World units: Increasing Y is moving up in the world.
 // Screen units: opposite
@@ -81,8 +109,8 @@ type Camera struct {
 }
 
 // Returns a transformation that converts points in world coordinates to screen coordinates for the camera
-func (c *Camera) ToScreen() ebiten.GeoM {
-	geo := ebiten.GeoM{}
+func (c *Camera) ToScreen() Mx {
+	geo := Mx{}
 	geo.Translate(-c.x+c.hw, -c.y+c.hh)
 	geo.Scale(1/(2*c.hw), 1/(2*c.hh))
 	//geo.Scale(1, -1)

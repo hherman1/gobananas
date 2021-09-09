@@ -203,13 +203,13 @@ func (g *Game) Update() error {
 
 func (g *Game) Draw(screen *ebiten.Image) {
 	//geo.Scale(1, -1)
-	geo := ebiten.GeoM{}
+	geo := Mx{}
 	position := g.p.b.GetPosition()
 	geo.Translate(-g.p.w/2, -g.p.h/2)
 	geo.Rotate(g.p.b.GetAngle())
 	geo.Translate(position.X, position.Y)
 	screenTransform := g.c.ToScreen()
-	geo.Concat(screenTransform)
+	geo.Concat(screenTransform.GeoM)
 
 	velocity := g.p.b.GetLinearVelocity()
 
@@ -221,7 +221,7 @@ func (g *Game) Draw(screen *ebiten.Image) {
 		},
 	})
 
-	screen.DrawRectShader(int(g.p.w), int(g.p.h), mainShader, &ebiten.DrawRectShaderOptions{GeoM: geo,
+	screen.DrawRectShader(int(g.p.w), int(g.p.h), mainShader, &ebiten.DrawRectShaderOptions{GeoM: geo.GeoM,
 		Uniforms: map[string]interface{}{
 			"Vx": float32(velocity.X),
 			"Vy": float32(velocity.Y),
@@ -230,12 +230,12 @@ func (g *Game) Draw(screen *ebiten.Image) {
 	})
 
 	for _, e := range g.entities {
-		geo := ebiten.GeoM{}
+		geo := Mx{}
 		position := e.b.GetPosition()
 		geo.Translate(-e.w/2, -e.h/2)
 		geo.Rotate(e.b.GetAngle())
 		geo.Translate(position.X, position.Y)
-		geo.Concat(screenTransform)
+		geo.Concat(screenTransform.GeoM)
 		velocity = e.b.GetLinearVelocity()
 		vertices, is := rect(0, 0, float32(e.w), float32(e.h), color.RGBA{})
 		for i, v := range vertices {
@@ -263,14 +263,12 @@ func (g *Game) Draw(screen *ebiten.Image) {
 
 	for _, a := range g.art {
 		// unflip the images
-		var geo ebiten.GeoM
+		var geo Mx
 		w, h := a.img.Size()
-		geo.Translate(-float64(w)/2, -float64(h)/2)
-		geo.Scale(a.Scale.X, a.Scale.Y)
-		geo.Scale(1, -1)
-		geo.Translate(a.Pos.X, a.Pos.Y)
-		geo.Concat(screenTransform)
-		screen.DrawImage(a.img, &ebiten.DrawImageOptions{GeoM: geo})
+		geo.Scale(1/float64(w), 1/float64(h))
+		geo.Concat(a.Transform().GeoM)
+		geo.Concat(screenTransform.GeoM)
+		screen.DrawImage(a.img, &ebiten.DrawImageOptions{GeoM: geo.GeoM})
 	}
 }
 

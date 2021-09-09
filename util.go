@@ -18,7 +18,7 @@ func init() {
 }
 
 // Utillity for drawing lines with a transformation
-func drawline(img *ebiten.Image, srcx, srcy, dstx, dsty float64, thickness float64, geom ebiten.GeoM, c color.Color) {
+func drawline(img *ebiten.Image, srcx, srcy, dstx, dsty float64, thickness float64, geom Mx, c color.Color) {
 	x1, y1 := geom.Apply(srcx, srcy)
 	x2, y2 := geom.Apply(dstx, dsty)
 

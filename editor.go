@@ -23,6 +23,7 @@ type Editor struct {
 	// The actual level
 	l Level
 }
+var unitVertices, unitIs = rect(0, 0, 1, 1, color.RGBA{})
 
 
 // Creates a new editor
@@ -31,16 +32,9 @@ func NewEditor() *Editor {
 	err := e.l.load(autosave)
 	if err != nil {
 		// autosave is broken, reset level
-		e.l = Level{Platforms: []*Block{
-			{
-				W: 100,
-				H: 0.5,
-				Pos: box2d.B2Vec2{
-					X: 0,
-					Y: 0,
-				},
-			},
-		}}
+		geo := Mx{}
+		geo.Scale(100, 0.5)
+		e.l = Level{Platforms: []*Block{{Mat: geo}}}
 	}
 	return &e
 }
@@ -62,46 +56,49 @@ var subeditors = []struct {
 		},
 	},
 	{
-		name: "Spawn",
-		key:  ebiten.KeyW,
-		activate: func(r *Root, e *Editor) {
-			r.a = &SpawnEditor{e}
-		},
-	},
-	{
 		name: "Art",
 		key:  ebiten.KeyA,
 		activate: func(r *Root, e *Editor) {
 			r.a = &ArtEditor{e: e}
 		},
 	},
+	{
+		name: "Transform",
+		key:  ebiten.KeyT,
+		activate: ActivateTransformEditor,
+	},
 }
 
-// Format of objects in saved levels
+// Blocks are the serializable format for platforms in the game.
 type Block struct {
-	W float64
-	H float64
-	// width, height, center in world coordinates
-	Pos box2d.B2Vec2
+	// A transformation that maps a unit square to a rectangle representing this block in world coordinates.
+	Mat Mx
+}
+
+func (b *Block) Transform() Mx {
+	return b.Mat
+}
+
+func (b *Block) SetTransform(m Mx) {
+	b.Mat = m
 }
 
 // Art to display on top of the level for covering up platforms and beautifying the world.
 type Art struct {
-	// The center of the art
-	Pos box2d.B2Vec2
+	// Transform that positions a unit square centered at 0,0 to the correct rectangle on which to draw this art
+	T Mx
 	// The path to load the art from from resources. e.g "resources/grass.png"
 	Path string
-	// Allows resizing the art.
-	Scale box2d.B2Vec2
 	// The loaded image. Always set once the level is loaded.
 	img *ebiten.Image
 }
 
-// Computes the dimensions in world units of this art. Requires the art to be fully loaded
-func (a *Art) Dim() (width, height float64) {
-	iw, ih := a.img.Size()
-	width, height = float64(iw)*a.Scale.X, float64(ih)*a.Scale.Y
-	return
+func (a *Art) Transform() Mx {
+	return a.T
+}
+
+func (a *Art) SetTransform(m Mx) {
+	a.T = m
 }
 
 // Load the art from resources
@@ -167,12 +164,22 @@ func (l Level) apply(g *Game) {
 	for _, p := range l.Platforms {
 		// make a body
 		body := box2d.NewB2BodyDef()
-		body.Position = box2d.B2Vec2{X: p.Pos.X, Y: p.Pos.Y}
+		cx, cy := p.Mat.Apply(0, 0)
+		body.Position = box2d.B2Vec2{X: cx, Y: cy}
 
+		// Compute half width, distance from center to right edge
+		wx, wy := p.Mat.Apply(0.5, 0)
+		hw := math.Sqrt((wx-cx)*(wx-cx) + (wy-cy)*(wy-cy))
+		// Half height
+		hx, hy := p.Mat.Apply(0, 0.5)
+		hh := math.Sqrt((hx-cx)*(hx-cx) + (hy-cy)*(hy-cy))
 		shape := box2d.MakeB2PolygonShape()
-		hw := p.W / 2
-		hh := p.H / 2
 		shape.SetAsBox(hw, hh)
+
+		// Angle, rotation between transformed right edge and original right edge
+		ax, ay := wx - cx, wy - cy
+		body.Angle = math.Atan2(ay, ax)
+
 		def := box2d.MakeB2FixtureDef()
 		def.Shape = &shape
 		def.Density = 1
@@ -203,7 +210,7 @@ func (e *Editor) Update(r *Root) error {
 		}
 		d := MouseDrag(ebiten.MouseButtonRight)
 		if d != (box2d.B2Vec2{}) {
-			geo := ebiten.GeoM{}
+			geo := Mx{}
 			geo.Scale(1/(2*e.c.hw), 1/(2*e.c.hh))
 			geo.Scale(-1, 1)
 			geo.Scale(float64(e.c.sw), float64(e.c.sh))
@@ -235,13 +242,18 @@ func (e *Editor) Update(r *Root) error {
 			// play mode
 			g := NewGame()
 			e.l.apply(g)
+			err := e.l.save(autosave)
+			if err != nil {
+				// still usable, just buggy
+				fmt.Println("Failed to autosave:", err)
+			}
 			r.a = &Admin{g}
 			return r.a.Update(r)
 		}
 		for _, sub := range subeditors {
 			if Clicked(sub.key) {
 				sub.activate(r, e)
-				break
+				return r.Update()
 			}
 		}
 	}
@@ -255,11 +267,9 @@ func (e *Editor) Update(r *Root) error {
 
 func (e *Editor) drawBlock(screen *ebiten.Image, block *Block) {
 	screenTransform := e.c.ToScreen()
-	geo := ebiten.GeoM{}
-	geo.Translate(-block.W/2, -block.H/2)
-	geo.Translate(block.Pos.X, block.Pos.Y)
-	geo.Concat(screenTransform)
-	vertices, is := rect(0, 0, float32(block.W), float32(block.H), color.RGBA{})
+	geo := block.Mat
+	geo.Concat(screenTransform.GeoM)
+	vertices, is := rect(-0.5, -0.5, 1, 1, color.RGBA{})
 	for i, v := range vertices {
 		sx, sy := geo.Apply(float64(v.DstX), float64(v.DstY))
 		v.DstX = float32(sx)
@@ -291,19 +301,19 @@ Editors:
 	// player spawn
 	screenTransform := e.c.ToScreen()
 	ssx, ssy := screenTransform.Apply(e.l.Spawn.X, e.l.Spawn.Y)
-	drawline(screen, ssx-10, ssy-10, ssx+10, ssy+10, 3, ebiten.GeoM{}, color.White)
-	drawline(screen, ssx-10, ssy+10, ssx+10, ssy-10, 3, ebiten.GeoM{}, color.White)
+	drawline(screen, ssx-10, ssy-10, ssx+10, ssy+10, 3, Mx{}, color.White)
+	drawline(screen, ssx-10, ssy+10, ssx+10, ssy-10, 3, Mx{}, color.White)
 
 	for _, a := range e.l.Art {
 		// unflip the images
-		var geo ebiten.GeoM
+		var geo Mx
 		w, h := a.img.Size()
-		geo.Translate(-float64(w)/2, -float64(h)/2)
-		geo.Scale(a.Scale.X, a.Scale.Y)
+		geo.Scale(1/float64(w), 1/float64(h))
+		geo.Translate(-0.5, -0.5)
 		geo.Scale(1, -1)
-		geo.Translate(a.Pos.X, a.Pos.Y)
-		geo.Concat(screenTransform)
-		screen.DrawImage(a.img, &ebiten.DrawImageOptions{GeoM: geo})
+		geo.Concat(a.Transform().GeoM)
+		geo.Concat(screenTransform.GeoM)
+		screen.DrawImage(a.img, &ebiten.DrawImageOptions{GeoM: geo.GeoM})
 	}
 }
 
@@ -330,13 +340,11 @@ func (p *PlatformEditor) Update(r *Root) error {
 	if ebiten.IsMouseButtonPressed(ebiten.MouseButtonLeft) {
 		wx, wy := p.e.c.Cursor()
 		if p.creating == nil {
+			geo := Mx{}
+			geo.Scale(0, 0)
+			geo.Translate(wx, wy)
 			p.creating = &Block{
-				W: 0,
-				H: 0,
-				Pos: box2d.B2Vec2{
-					X: wx,
-					Y: wy,
-				},
+				Mat: geo,
 			}
 			p.cpinx = wx
 			p.cpiny = wy
@@ -345,10 +353,11 @@ func (p *PlatformEditor) Update(r *Root) error {
 		maxx := math.Max(wx, p.cpinx)
 		miny := math.Min(wy, p.cpiny)
 		maxy := math.Max(wy, p.cpiny)
-		p.creating.W = maxx - minx
-		p.creating.H = maxy - miny
-		p.creating.Pos.X = (maxx + minx) / 2
-		p.creating.Pos.Y = (maxy + miny) / 2
+		geo := Mx{}
+		geo.Translate(0.5, 0.5)
+		geo.Scale(maxx - minx, maxy - miny)
+		geo.Translate(minx, miny)
+		p.creating.Mat = geo
 	}
 	if !ebiten.IsMouseButtonPressed(ebiten.MouseButtonLeft) && p.creating != nil {
 		p.e.l.Platforms = append(p.e.l.Platforms, p.creating)
@@ -365,30 +374,8 @@ func (p *PlatformEditor) Draw(screen *ebiten.Image) {
 	p.e.Draw(screen)
 }
 
-type SpawnEditor struct{e *Editor}
-
-func (s *SpawnEditor) Layout(outsideWidth, outsideHeight int) (screenWidth, screenHeight int) {
-	return s.e.Layout(outsideWidth, outsideHeight)
-}
-
-func (s *SpawnEditor) Draw(screen *ebiten.Image) {
-	s.e.Draw(screen)
-	ebitenutil.DebugPrintAt(screen, "Spawn Editor", 10, s.e.c.sh-20)
-}
-
-func (s *SpawnEditor) Update(r *Root) error {
-	if ebiten.IsMouseButtonPressed(ebiten.MouseButtonLeft) {
-		wx, wy := s.e.c.Cursor()
-		s.e.l.Spawn = box2d.B2Vec2{X: wx, Y: wy}
-	}
-	return s.e.Update(r)
-}
-
 // Editor for manipulating art in the level
 type ArtEditor struct {
-	// For moving art around
-	sel *Art
-
 	// For entering commands
 	cmd []rune
 	// Response from the subeditor
@@ -412,7 +399,6 @@ func (a *ArtEditor) AddImage(e *Editor, path string) error {
 	}
 	e.l.Art = append(e.l.Art, &Art{
 		Path: path,
-		Scale: box2d.B2Vec2{1, 1},
 		img:  img,
 	})
 	return nil
@@ -423,27 +409,6 @@ func (a *ArtEditor) String() string {
 }
 
 func (a *ArtEditor) Update(r *Root) error {
-	if MouseClicked(ebiten.MouseButtonLeft) {
-		a.sel = nil
-		wx, wy := a.e.c.Cursor()
-		for _, art := range a.e.l.Art {
-			w, h := art.Dim()
-			if (wx > art.Pos.X-w/2) && (wx < art.Pos.X+w/2) && (wy > art.Pos.Y-h/2) && (wy < art.Pos.Y+h/2) {
-				a.sel = art
-				break
-			}
-		}
-	}
-	drag := MouseDrag(ebiten.MouseButtonLeft)
-	if a.sel != nil && drag != (box2d.B2Vec2{}) {
-		geo := ebiten.GeoM{}
-		geo.Scale(1/(2*a.e.c.hw), 1/(2*a.e.c.hh))
-		geo.Scale(1, -1)
-		geo.Scale(float64(a.e.c.sw), float64(a.e.c.sh))
-		geo.Invert()
-		cx, cy := geo.Apply(drag.X, drag.Y)
-		a.sel.Pos.OperatorPlusInplace(box2d.B2Vec2{cx, cy})
-	}
 	// command processing
 	{
 		if !a.typ && a.result == "" {
@@ -471,14 +436,6 @@ func (a *ArtEditor) Update(r *Root) error {
 }
 
 func (a *ArtEditor) Draw(screen *ebiten.Image) {
-	geom := a.e.c.ToScreen()
-	if a.sel != nil {
-		w, h := a.sel.Dim()
-		drawline(screen, a.sel.Pos.X-w/2, a.sel.Pos.Y-h/2, a.sel.Pos.X+w/2, a.sel.Pos.Y-h/2, 3, geom, color.RGBA{R: 255, A: 255})
-		drawline(screen, a.sel.Pos.X+w/2, a.sel.Pos.Y-h/2, a.sel.Pos.X+w/2, a.sel.Pos.Y+h/2, 3, geom, color.RGBA{R: 255, A: 255})
-		drawline(screen, a.sel.Pos.X+w/2, a.sel.Pos.Y+h/2, a.sel.Pos.X-w/2, a.sel.Pos.Y+h/2, 3, geom, color.RGBA{R: 255, A: 255})
-		drawline(screen, a.sel.Pos.X-w/2, a.sel.Pos.Y+h/2, a.sel.Pos.X-w/2, a.sel.Pos.Y-h/2, 3, geom, color.RGBA{R: 255, A: 255})
-	}
 	ebitenutil.DebugPrintAt(screen, a.result, 10, a.e.c.sh-20)
 	ebitenutil.DebugPrintAt(screen, string(a.cmd), 10, a.e.c.sh-20)
 	a.e.Draw(screen)
