@@ -78,7 +78,7 @@ func Audio(path string) ([]byte, error) {
 	}
 	a, err := io.ReadAll(stream)
 	if err != nil {
-		return nil, fmt.Errorf("rread stream: %w", err)
+		return nil, fmt.Errorf("read stream: %w", err)
 	}
 	return a, nil
 }
