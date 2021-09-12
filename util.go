@@ -33,6 +33,13 @@ func drawline(img *ebiten.Image, srcx, srcy, dstx, dsty float64, thickness float
 	img.DrawImage(emptySubImage, op)
 }
 
+// Utility for drawing a point with a fixed size in pixels
+func drawpoint(img *ebiten.Image, x, y float64, px int, toScreen Mx, c color.Color) {
+	sx, sy := toScreen.Apply(x, y)
+	drawline(img, sx - float64(px)/2, sy - float64(px)/2, sx + float64(px)/2, sy + float64(px)/2, 3, Mx{}, c)
+	drawline(img, sx - float64(px)/2, sy + float64(px)/2, sx + float64(px)/2, sy - float64(px)/2, 3, Mx{}, c)
+}
+
 func colorToScale(clr color.Color) (float64, float64, float64, float64) {
 	cr, cg, cb, ca := clr.RGBA()
 	if ca == 0 {

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"github.com/hajimehoshi/ebiten/v2"
 	"github.com/hajimehoshi/ebiten/v2/ebitenutil"
+	"github.com/hherman1/gobananas/resources"
 	"image/color"
 	"log"
 	"math"
@@ -52,11 +53,11 @@ func main() {
 
 func run() error {
 	var err error
-	mainShader, err = Shader("shaders/main_shader.go")
+	mainShader, err = resources.Shader("shaders/main_shader.go")
 	if err != nil {
 		return fmt.Errorf("loading main shader: %w", err)
 	}
-	outlineShader, err = Shader("shaders/outline_shader.go")
+	outlineShader, err = resources.Shader("shaders/outline_shader.go")
 	if err != nil {
 		return fmt.Errorf("loading outline shader: %w", err)
 	}

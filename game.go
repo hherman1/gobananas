@@ -3,6 +3,8 @@ package main
 import (
 	"github.com/ByteArena/box2d"
 	"github.com/hajimehoshi/ebiten/v2"
+	"github.com/hajimehoshi/ebiten/v2/audio"
+	"github.com/hherman1/gobananas/resources"
 	"image/color"
 	"math"
 )
@@ -16,7 +18,6 @@ type Entity struct {
 	// If true, the players jump will be restored on contact with this entity
 	restoresJump bool
 }
-
 
 // A game actually simulates a level and allows player control.
 type Game struct {
@@ -33,6 +34,11 @@ type Game struct {
 
 	// Number of evaluated ticks for timekeeping.
 	time int
+
+	// Context for audio playing
+	actx *audio.Context
+	// Audio players for this game.
+	aps []*audio.Player
 }
 
 // Creates a new game with a default player and empty world
@@ -45,6 +51,7 @@ func NewGame() *Game {
 		y:  0,
 	}
 	g.world = box2d.MakeB2World(box2d.MakeB2Vec2(0.0, -10.0))
+	g.actx = audio.NewContext(resources.SampleRate)
 
 	// set up the player
 	player := box2d.NewB2BodyDef()
@@ -266,7 +273,9 @@ func (g *Game) Draw(screen *ebiten.Image) {
 		var geo Mx
 		w, h := a.img.Size()
 		geo.Scale(1/float64(w), 1/float64(h))
-		geo.Concat(a.Transform().GeoM)
+		geo.Translate(-0.5, -0.5)
+		geo.Scale(1, -1)
+		geo.Concat(a.T.GeoM)
 		geo.Concat(screenTransform.GeoM)
 		screen.DrawImage(a.img, &ebiten.DrawImageOptions{GeoM: geo.GeoM})
 	}

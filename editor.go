@@ -5,11 +5,14 @@ import (
 	"fmt"
 	"github.com/ByteArena/box2d"
 	"github.com/hajimehoshi/ebiten/v2"
+	"github.com/hajimehoshi/ebiten/v2/audio"
 	"github.com/hajimehoshi/ebiten/v2/ebitenutil"
+	"github.com/hherman1/gobananas/resources"
 	"image/color"
 	"math"
 	"os"
 	"strings"
+	"time"
 )
 
 // We automatically write updates to the current level to the autosave file periodically
@@ -22,6 +25,8 @@ type Editor struct {
 
 	// The actual level
 	l Level
+
+	autotimer *time.Ticker
 }
 var unitVertices, unitIs = rect(0, 0, 1, 1, color.RGBA{})
 
@@ -29,6 +34,7 @@ var unitVertices, unitIs = rect(0, 0, 1, 1, color.RGBA{})
 // Creates a new editor
 func NewEditor() *Editor {
 	var e Editor
+	e.autotimer = time.NewTicker(10 * time.Second)
 	err := e.l.load(autosave)
 	if err != nil {
 		// autosave is broken, reset level
@@ -59,13 +65,21 @@ var subeditors = []struct {
 		name: "Art",
 		key:  ebiten.KeyA,
 		activate: func(r *Root, e *Editor) {
-			r.a = &ArtEditor{e: e}
+			r.a = &ArtEditor{e: e, t: &Typer{
+				Placeholder: "Art Editor: Press enter to load art resources into the level",
+				C:           &e.c,
+			}}
 		},
 	},
 	{
-		name: "Transform",
-		key:  ebiten.KeyT,
-		activate: ActivateTransformEditor,
+		name:     "Select",
+		key:      ebiten.KeyS,
+		activate: ActivateSelectEditor,
+	},
+	{
+		name:     "BG Audio",
+		key:      ebiten.KeyB,
+		activate: ActivateBGAudio,
 	},
 }
 
@@ -73,14 +87,6 @@ var subeditors = []struct {
 type Block struct {
 	// A transformation that maps a unit square to a rectangle representing this block in world coordinates.
 	Mat Mx
-}
-
-func (b *Block) Transform() Mx {
-	return b.Mat
-}
-
-func (b *Block) SetTransform(m Mx) {
-	b.Mat = m
 }
 
 // Art to display on top of the level for covering up platforms and beautifying the world.
@@ -93,21 +99,31 @@ type Art struct {
 	img *ebiten.Image
 }
 
-func (a *Art) Transform() Mx {
-	return a.T
-}
-
-func (a *Art) SetTransform(m Mx) {
-	a.T = m
-}
-
 // Load the art from resources
 func (a *Art) Load() error {
-	img, err := Image(a.Path)
+	img, err := resources.Image(a.Path)
 	if err != nil {
 		return fmt.Errorf("load image: %w", err)
 	}
 	a.img = img
+	return nil
+}
+
+// Serializable audio file reference for use in level files
+type Audio struct {
+	// The file path for loading the audio
+	Path string
+	// The decoded file for use as a player
+	decoded []byte
+}
+
+// Loads the audio player into the audio struct. Must be called before sending the audio to the game
+func (a *Audio) Load() error {
+	p, err := resources.Audio(a.Path)
+	if err != nil {
+		return fmt.Errorf("load %v: %w", a.Path, err)
+	}
+	a.decoded = p
 	return nil
 }
 
@@ -119,6 +135,8 @@ type Level struct {
 	Platforms []*Block
 	// Images for display
 	Art []*Art
+	// Path to background audio which should play when game is running
+	BgAudio *Audio
 }
 
 // Saves the level design to the given path
@@ -153,6 +171,12 @@ func (l *Level) load(path string) error {
 		err := a.Load()
 		if err != nil {
 			return fmt.Errorf("load %v: %w", a.Path, err)
+		}
+	}
+	if l.BgAudio != nil {
+		err = l.BgAudio.Load()
+		if err != nil {
+			return fmt.Errorf("load bg audio: %w", err)
 		}
 	}
 	return nil
@@ -197,10 +221,27 @@ func (l Level) apply(g *Game) {
 	for _, a := range l.Art {
 		g.art = append(g.art, a)
 	}
+	if l.BgAudio != nil {
+		g.aps = append(g.aps, audio.NewPlayerFromBytes(g.actx, l.BgAudio.decoded))
+	}
+	for _, a := range g.aps {
+		a.Play()
+	}
 }
 
 // Run a single tick of editing updates
 func (e *Editor) Update(r *Root) error {
+	{
+		// autosave
+		select {
+		case <-e.autotimer.C:
+			err := e.l.save(autosave)
+			if err != nil {
+				fmt.Println("Failed to autosave:", err)
+			}
+		default:
+		}
+	}
 	{
 		// camera controls
 		_, yoff := ebiten.Wheel()
@@ -223,17 +264,12 @@ func (e *Editor) Update(r *Root) error {
 	// save/load level
 	{
 		if Clicked(ebiten.KeyS) && ebiten.IsKeyPressed(ebiten.KeyMeta) {
-			err := e.l.save("created.lvl")
-			if err != nil {
-				return fmt.Errorf("save created.lvl: %w", err)
-			}
-			fmt.Println("saved")
+			ActivateSave(r, e)
+			return r.Update()
 		}
 		if Clicked(ebiten.KeyL) && ebiten.IsKeyPressed(ebiten.KeyMeta) {
-			err := e.l.load("created.lvl")
-			if err != nil {
-				return fmt.Errorf("load created.lvl: %w")
-			}
+			ActivateLoad(r, e)
+			return r.Update()
 		}
 	}
 	// switch mode
@@ -300,9 +336,7 @@ Editors:
 
 	// player spawn
 	screenTransform := e.c.ToScreen()
-	ssx, ssy := screenTransform.Apply(e.l.Spawn.X, e.l.Spawn.Y)
-	drawline(screen, ssx-10, ssy-10, ssx+10, ssy+10, 3, Mx{}, color.White)
-	drawline(screen, ssx-10, ssy+10, ssx+10, ssy-10, 3, Mx{}, color.White)
+	drawpoint(screen, e.l.Spawn.X, e.l.Spawn.Y, 20, screenTransform, color.White)
 
 	for _, a := range e.l.Art {
 		// unflip the images
@@ -311,7 +345,7 @@ Editors:
 		geo.Scale(1/float64(w), 1/float64(h))
 		geo.Translate(-0.5, -0.5)
 		geo.Scale(1, -1)
-		geo.Concat(a.Transform().GeoM)
+		geo.Concat(a.T.GeoM)
 		geo.Concat(screenTransform.GeoM)
 		screen.DrawImage(a.img, &ebiten.DrawImageOptions{GeoM: geo.GeoM})
 	}
@@ -376,12 +410,7 @@ func (p *PlatformEditor) Draw(screen *ebiten.Image) {
 
 // Editor for manipulating art in the level
 type ArtEditor struct {
-	// For entering commands
-	cmd []rune
-	// Response from the subeditor
-	result string
-	// Are we typing?
-	typ bool
+	t *Typer
 
 	// The editor we came from
 	e *Editor
@@ -393,7 +422,7 @@ func (a *ArtEditor) Layout(outsideWidth, outsideHeight int) (screenWidth, screen
 
 
 func (a *ArtEditor) AddImage(e *Editor, path string) error {
-	img, err := Image(path)
+	img, err := resources.Image(path)
 	if err != nil {
 		return fmt.Errorf("load image: %w", err)
 	}
@@ -410,33 +439,179 @@ func (a *ArtEditor) String() string {
 
 func (a *ArtEditor) Update(r *Root) error {
 	// command processing
-	{
-		if !a.typ && a.result == "" {
-			a.result = "Art Editor: Press enter to load an image by path (e.g resources/grass.png)"
-		}
-		if Clicked(ebiten.KeyEnter) && !a.typ {
-			a.typ = true
-			a.result = ""
-		} else if Clicked(ebiten.KeyEnter) && a.typ {
-			err := a.AddImage(a.e, string(a.cmd))
-			if err != nil {
-				a.result = fmt.Sprintf("Failed to load %v: %v", string(a.cmd), err)
-			} else {
-				a.result = fmt.Sprintf("Successfully loaded %v", string(a.cmd))
-			}
-			a.typ = false
-			a.cmd = []rune{}
-		}
-		if a.typ {
-			a.cmd = append(a.cmd, ebiten.InputChars()...)
-			return nil
+	cmd, typ := a.t.Update()
+	if typ {
+		return nil
+	}
+	if cmd != "" {
+		err := a.AddImage(a.e, cmd)
+		if err != nil {
+			a.t.Placeholder = fmt.Sprintf("Failed to load %v: %v", string(cmd), err)
+		} else {
+			a.t.Placeholder = fmt.Sprintf("Successfully loaded %v", string(cmd))
 		}
 	}
 	return a.e.Update(r)
 }
 
 func (a *ArtEditor) Draw(screen *ebiten.Image) {
-	ebitenutil.DebugPrintAt(screen, a.result, 10, a.e.c.sh-20)
-	ebitenutil.DebugPrintAt(screen, string(a.cmd), 10, a.e.c.sh-20)
 	a.e.Draw(screen)
+	a.t.Draw(screen)
 }
+
+// A widget for creating interactive text inputs
+type Typer struct {
+	// For entering commands
+	cmd []rune
+	// Are we typing?
+	typ bool
+
+	// Text to print when input is empty
+	Placeholder string
+	// For drawing
+	C *Camera
+}
+
+// Updates the state of the typer for this frame. Returns a complete message from the user, if available, and a boolean
+// indicating whether or not the typer is currently typing. If the typer is typing, keyboard inputs should be ignored
+// by the app.
+func (t *Typer) Update() (string, bool) {
+	// command processing
+	{
+		if Clicked(ebiten.KeyEnter) && !t.typ {
+			t.typ = true
+		} else if Clicked(ebiten.KeyEnter) && t.typ {
+			cmd := string(t.cmd)
+			t.typ = false
+			t.cmd = []rune{}
+			return cmd, false
+		}
+		if t.typ {
+			if len(t.cmd) > 0 && Clicked(ebiten.KeyBackspace) {
+				t.cmd = t.cmd[:len(t.cmd) - 1]
+			}
+			t.cmd = append(t.cmd, ebiten.InputChars()...)
+			return "", true
+		}
+	}
+	return "", false
+}
+
+func (t *Typer) Draw(screen *ebiten.Image) {
+	if !t.typ {
+		ebitenutil.DebugPrintAt(screen, t.Placeholder, 10, t.C.sh-20)
+	} else {
+		ebitenutil.DebugPrintAt(screen, string(t.cmd), 10, t.C.sh-20)
+	}
+}
+
+// Save/load controller
+type SaveAndLoadEditor struct {
+	e *Editor
+	t *Typer
+
+	// If false, this is a save, if true this is a load
+	load bool
+}
+
+// Activates a save editor
+func ActivateSave(r *Root, e *Editor) {
+	r.a = &SaveAndLoadEditor{
+		e:    e,
+		t:    &Typer{
+			typ:         true,
+			Placeholder: "",
+			C:           &e.c,
+		},
+		load: false,
+	}
+}
+
+// Activates a load editor
+func ActivateLoad(r *Root, e *Editor) {
+	r.a = &SaveAndLoadEditor{
+		e:    e,
+		t:    &Typer{
+			typ:         true,
+			Placeholder: "",
+			C:           &e.c,
+		},
+		load: true,
+	}
+}
+
+func (s *SaveAndLoadEditor) Layout(outsideWidth, outsideHeight int) (screenWidth, screenHeight int) {
+	return s.e.Layout(outsideWidth, outsideHeight)
+}
+
+func (s *SaveAndLoadEditor) Update(r *Root) error {
+	path, typ := s.t.Update()
+	if typ {
+		return nil
+	}
+	if path != "" {
+		if s.load {
+			err := s.e.l.load(path)
+			if err != nil {
+				return fmt.Errorf("failed to load %v: %w", err)
+			}
+		} else {
+			err := s.e.l.save(path)
+			if err != nil {
+				fmt.Println("Failed to save:", err)
+			}
+		}
+		r.a = s.e
+		return r.Update()
+	}
+	return s.e.Update(r)
+}
+
+func (s *SaveAndLoadEditor) Draw(screen *ebiten.Image) {
+	s.e.Draw(screen)
+	s.t.Draw(screen)
+}
+
+// BG audio controller
+type BGAudioEditor struct {
+	e *Editor
+	t *Typer
+}
+
+// Activates a save editor
+func ActivateBGAudio(r *Root, e *Editor) {
+	r.a = &BGAudioEditor{
+		e:    e,
+		t:    &Typer{
+			Placeholder: "BG Audio editor. Press enter to set BG audio",
+			C:           &e.c,
+		},
+	}
+}
+
+func (b *BGAudioEditor) Layout(outsideWidth, outsideHeight int) (screenWidth, screenHeight int) {
+	return b.e.Layout(outsideWidth, outsideHeight)
+}
+
+func (b *BGAudioEditor) Update(r *Root) error {
+	path, typ := b.t.Update()
+	if typ {
+		return nil
+	}
+	if path != "" {
+		b.e.l.BgAudio = &Audio{Path: path}
+		err := b.e.l.BgAudio.Load()
+		if err != nil {
+			b.t.Placeholder = fmt.Sprintf("Failed to load %v: %w", path, err)
+		} else {
+			b.t.Placeholder = fmt.Sprintf("Successfully loaded %v", path)
+		}
+	}
+	return b.e.Update(r)
+}
+
+func (b *BGAudioEditor) Draw(screen *ebiten.Image) {
+	b.e.Draw(screen)
+	b.t.Draw(screen)
+}
+
