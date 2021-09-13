@@ -222,7 +222,7 @@ func (l Level) apply(g *Game) {
 		g.art = append(g.art, a)
 	}
 	if l.BgAudio != nil {
-		g.aps = append(g.aps, audio.NewPlayerFromBytes(g.actx, l.BgAudio.decoded))
+		g.aps = append(g.aps, audio.NewPlayerFromBytes(Actx, l.BgAudio.decoded))
 	}
 	for _, a := range g.aps {
 		a.Play()

@@ -19,6 +19,9 @@ type Entity struct {
 	restoresJump bool
 }
 
+// The audio context. Can only be one per process.
+var Actx = audio.NewContext(resources.SampleRate)
+
 // A game actually simulates a level and allows player control.
 type Game struct {
 	world box2d.B2World
@@ -35,8 +38,6 @@ type Game struct {
 	// Number of evaluated ticks for timekeeping.
 	time int
 
-	// Context for audio playing
-	actx *audio.Context
 	// Audio players for this game.
 	aps []*audio.Player
 }
@@ -51,7 +52,6 @@ func NewGame() *Game {
 		y:  0,
 	}
 	g.world = box2d.MakeB2World(box2d.MakeB2Vec2(0.0, -10.0))
-	g.actx = audio.NewContext(resources.SampleRate)
 
 	// set up the player
 	player := box2d.NewB2BodyDef()
