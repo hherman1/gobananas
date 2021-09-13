@@ -1,7 +1,7 @@
 package main
 
 import (
-	"encoding/gob"
+	"encoding/json"
 	"fmt"
 	"github.com/ByteArena/box2d"
 	"github.com/hajimehoshi/ebiten/v2"
@@ -40,7 +40,7 @@ func NewEditor() *Editor {
 		// autosave is broken, reset level
 		geo := Mx{}
 		geo.Scale(100, 0.5)
-		e.l = Level{Platforms: []*Block{{Mat: geo}}}
+		e.l = Level{Blocks: []*Block{{T: geo}}}
 	}
 	return &e
 }
@@ -55,7 +55,7 @@ var subeditors = []struct {
 	activate func(r *Root, e *Editor)
 }{
 	{
-		name: "Platforms",
+		name: "Blocks",
 		key:  ebiten.KeyL,
 		activate: func(r *Root, e *Editor) {
 			r.a = &PlatformEditor{e: e}
@@ -86,7 +86,7 @@ var subeditors = []struct {
 // Blocks are the serializable format for platforms in the game.
 type Block struct {
 	// A transformation that maps a unit square to a rectangle representing this block in world coordinates.
-	Mat Mx
+	T Mx
 }
 
 // Art to display on top of the level for covering up platforms and beautifying the world.
@@ -132,11 +132,11 @@ type Level struct {
 	// Where does the player spawn in the level
 	Spawn box2d.B2Vec2
 	// All the platforms in the physics world
-	Platforms []*Block
+	Blocks []*Block
 	// Images for display
-	Art []*Art
+	Art []*Art `json:",omitempty"`
 	// Path to background audio which should play when game is running
-	BgAudio *Audio
+	BGAudio *Audio `json:",omitempty"`
 }
 
 // Saves the level design to the given path
@@ -146,7 +146,8 @@ func (l Level) save(path string) error {
 		return fmt.Errorf("open file to save level: %w", err)
 	}
 	defer f.Close()
-	encoder := gob.NewEncoder(f)
+	encoder := json.NewEncoder(f)
+	encoder.SetIndent("", "    ")
 	err = encoder.Encode(l)
 	if err != nil {
 		return fmt.Errorf("save level: %w", err)
@@ -162,7 +163,7 @@ func (l *Level) load(path string) error {
 		return fmt.Errorf("open file to load level: %w", err)
 	}
 	defer f.Close()
-	decoder := gob.NewDecoder(f)
+	decoder := json.NewDecoder(f)
 	err = decoder.Decode(l)
 	if err != nil {
 		return fmt.Errorf("decoding level from file: %w", err)
@@ -173,8 +174,8 @@ func (l *Level) load(path string) error {
 			return fmt.Errorf("load %v: %w", a.Path, err)
 		}
 	}
-	if l.BgAudio != nil {
-		err = l.BgAudio.Load()
+	if l.BGAudio != nil {
+		err = l.BGAudio.Load()
 		if err != nil {
 			return fmt.Errorf("load bg audio: %w", err)
 		}
@@ -185,17 +186,17 @@ func (l *Level) load(path string) error {
 // Adds the contents of this level to a given game world
 func (l Level) apply(g *Game) {
 	g.p.b.SetTransform(l.Spawn, 0)
-	for _, p := range l.Platforms {
+	for _, p := range l.Blocks {
 		// make a body
 		body := box2d.NewB2BodyDef()
-		cx, cy := p.Mat.Apply(0, 0)
+		cx, cy := p.T.Apply(0, 0)
 		body.Position = box2d.B2Vec2{X: cx, Y: cy}
 
 		// Compute half width, distance from center to right edge
-		wx, wy := p.Mat.Apply(0.5, 0)
+		wx, wy := p.T.Apply(0.5, 0)
 		hw := math.Sqrt((wx-cx)*(wx-cx) + (wy-cy)*(wy-cy))
 		// Half height
-		hx, hy := p.Mat.Apply(0, 0.5)
+		hx, hy := p.T.Apply(0, 0.5)
 		hh := math.Sqrt((hx-cx)*(hx-cx) + (hy-cy)*(hy-cy))
 		shape := box2d.MakeB2PolygonShape()
 		shape.SetAsBox(hw, hh)
@@ -221,8 +222,8 @@ func (l Level) apply(g *Game) {
 	for _, a := range l.Art {
 		g.art = append(g.art, a)
 	}
-	if l.BgAudio != nil {
-		g.aps = append(g.aps, audio.NewPlayerFromBytes(Actx, l.BgAudio.decoded))
+	if l.BGAudio != nil {
+		g.aps = append(g.aps, audio.NewPlayerFromBytes(Actx, l.BGAudio.decoded))
 	}
 	for _, a := range g.aps {
 		a.Play()
@@ -303,7 +304,7 @@ func (e *Editor) Update(r *Root) error {
 
 func (e *Editor) drawBlock(screen *ebiten.Image, block *Block) {
 	screenTransform := e.c.ToScreen()
-	geo := block.Mat
+	geo := block.T
 	geo.Concat(screenTransform.GeoM)
 	vertices, is := rect(-0.5, -0.5, 1, 1, color.RGBA{})
 	for i, v := range vertices {
@@ -321,7 +322,7 @@ func (e *Editor) drawBlock(screen *ebiten.Image, block *Block) {
 }
 
 func (e *Editor) Draw(screen *ebiten.Image) {
-	for _, entity := range e.l.Platforms {
+	for _, entity := range e.l.Blocks {
 		e.drawBlock(screen, entity)
 	}
 	var s strings.Builder
@@ -367,7 +368,7 @@ func (p *PlatformEditor) Layout(outsideWidth, outsideHeight int) (screenWidth, s
 
 
 func (p *PlatformEditor) String() string {
-	return "Platforms"
+	return "Blocks"
 }
 
 func (p *PlatformEditor) Update(r *Root) error {
@@ -378,7 +379,7 @@ func (p *PlatformEditor) Update(r *Root) error {
 			geo.Scale(0, 0)
 			geo.Translate(wx, wy)
 			p.creating = &Block{
-				Mat: geo,
+				T: geo,
 			}
 			p.cpinx = wx
 			p.cpiny = wy
@@ -391,10 +392,10 @@ func (p *PlatformEditor) Update(r *Root) error {
 		geo.Translate(0.5, 0.5)
 		geo.Scale(maxx - minx, maxy - miny)
 		geo.Translate(minx, miny)
-		p.creating.Mat = geo
+		p.creating.T = geo
 	}
 	if !ebiten.IsMouseButtonPressed(ebiten.MouseButtonLeft) && p.creating != nil {
-		p.e.l.Platforms = append(p.e.l.Platforms, p.creating)
+		p.e.l.Blocks = append(p.e.l.Blocks, p.creating)
 		p.creating = nil
 	}
 	return p.e.Update(r)
@@ -599,8 +600,8 @@ func (b *BGAudioEditor) Update(r *Root) error {
 		return nil
 	}
 	if path != "" {
-		b.e.l.BgAudio = &Audio{Path: path}
-		err := b.e.l.BgAudio.Load()
+		b.e.l.BGAudio = &Audio{Path: path}
+		err := b.e.l.BGAudio.Load()
 		if err != nil {
 			b.t.Placeholder = fmt.Sprintf("Failed to load %v: %w", path, err)
 		} else {

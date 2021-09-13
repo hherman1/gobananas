@@ -2,14 +2,13 @@ package main
 
 import (
 	_ "embed"
-	"encoding/binary"
+	"encoding/json"
 	"fmt"
 	"github.com/hajimehoshi/ebiten/v2"
 	"github.com/hajimehoshi/ebiten/v2/ebitenutil"
 	"github.com/hherman1/gobananas/resources"
 	"image/color"
 	"log"
-	"math"
 )
 
 var mainShader *ebiten.Shader
@@ -21,25 +20,47 @@ type Mx struct {
 	ebiten.GeoM
 }
 
-func (m *Mx) GobDecode(bytes []byte) error {
-	m.SetElement(0, 0, math.Float64frombits(binary.BigEndian.Uint64(bytes[8*0:])))
-	m.SetElement(0, 1, math.Float64frombits(binary.BigEndian.Uint64(bytes[8*1:])))
-	m.SetElement(0, 2, math.Float64frombits(binary.BigEndian.Uint64(bytes[8*2:])))
-	m.SetElement(1, 0, math.Float64frombits(binary.BigEndian.Uint64(bytes[8*3:])))
-	m.SetElement(1, 1, math.Float64frombits(binary.BigEndian.Uint64(bytes[8*4:])))
-	m.SetElement(1, 2, math.Float64frombits(binary.BigEndian.Uint64(bytes[8*5:])))
+// Array representation of the the matrix
+func (m Mx) array() [6]float64 {
+	var out [6]float64
+	out[0] = m.Element(0, 0)
+	out[1] = m.Element(0, 1)
+	out[2] = m.Element(0, 2)
+	out[3] = m.Element(1, 0)
+	out[4] = m.Element(1, 1)
+	out[5] = m.Element(1, 2)
+	return out
+}
+
+// Fills out the matrix from the first 6 elements of the given array.
+func (m *Mx) fromArray(arr []float64) error {
+	if len(arr) < 6 {
+		return fmt.Errorf("expected len > 6, was %v", len(arr))
+	}
+	m.SetElement(0, 0, arr[0])
+	m.SetElement(0, 1, arr[1])
+	m.SetElement(0, 2, arr[2])
+	m.SetElement(1, 0, arr[3])
+	m.SetElement(1, 1, arr[4])
+	m.SetElement(1, 2, arr[5])
 	return nil
 }
 
-func (m Mx) GobEncode() ([]byte, error) {
-	var out [8*6]byte
-	binary.BigEndian.PutUint64(out[8*0:], math.Float64bits(m.Element(0, 0)))
-	binary.BigEndian.PutUint64(out[8*1:], math.Float64bits(m.Element(0, 1)))
-	binary.BigEndian.PutUint64(out[8*2:], math.Float64bits(m.Element(0, 2)))
-	binary.BigEndian.PutUint64(out[8*3:], math.Float64bits(m.Element(1, 0)))
-	binary.BigEndian.PutUint64(out[8*4:], math.Float64bits(m.Element(1, 1)))
-	binary.BigEndian.PutUint64(out[8*5:], math.Float64bits(m.Element(1, 2)))
-	return out[:], nil
+func (m *Mx) UnmarshalJSON(bytes []byte) error {
+	var fs []float64
+	err := json.Unmarshal(bytes, &fs)
+	if err != nil {
+		return fmt.Errorf("deserialize floats: %w", err)
+	}
+	err = m.fromArray(fs)
+	if err != nil {
+		return fmt.Errorf("copy from float slice: %w", err)
+	}
+	return nil
+}
+
+func (m Mx) MarshalJSON() ([]byte, error) {
+	return json.Marshal(m.array())
 }
 
 // World units: Increasing Y is moving up in the world.

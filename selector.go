@@ -303,27 +303,27 @@ type BlockSelector struct {
 
 func (b *BlockSelector) Paste() Selectable {
 	kopy := *b.b
-	b.l.Platforms = append(b.l.Platforms, &kopy)
+	b.l.Blocks = append(b.l.Blocks, &kopy)
 	return &BlockSelector{l: b.l, b: &kopy}
 }
 
 func (b *BlockSelector) Delete() {
 	found := -1
-	for i, o := range b.l.Platforms {
+	for i, o := range b.l.Blocks {
 		if o == b.b {
 			found = i
 			break
 		}
 	}
-	b.l.Platforms = append(b.l.Platforms[:found], b.l.Platforms[found+1:]...)
+	b.l.Blocks = append(b.l.Blocks[:found], b.l.Blocks[found+1:]...)
 }
 
 func (b *BlockSelector) Transform() Mx {
-	return b.b.Mat
+	return b.b.T
 }
 
 func (b *BlockSelector) SetTransform(m Mx) {
-	b.b.Mat = m
+	b.b.T = m
 }
 
 // An editor that supports transforming arbitrary objects in the scene
@@ -341,7 +341,7 @@ func ActivateSelectEditor(r *Root, e *Editor) {
 	for _, a := range e.l.Art {
 		ss = append(ss, &ArtSelector{l: &e.l, a:a})
 	}
-	for _, b := range e.l.Platforms {
+	for _, b := range e.l.Blocks {
 		ss = append(ss, &BlockSelector{b: b, l: &e.l})
 	}
 	r.a = &SelectEditor{
