@@ -76,11 +76,6 @@ var subeditors = []struct {
 		key:      ebiten.KeyS,
 		activate: ActivateSelectEditor,
 	},
-	{
-		name:     "BG Audio",
-		key:      ebiten.KeyB,
-		activate: ActivateBGAudio,
-	},
 }
 
 // Blocks are the serializable format for platforms in the game.
@@ -572,47 +567,3 @@ func (s *SaveAndLoadEditor) Draw(screen *ebiten.Image) {
 	s.e.Draw(screen)
 	s.t.Draw(screen)
 }
-
-// BG audio controller
-type BGAudioEditor struct {
-	e *Editor
-	t *Typer
-}
-
-// Activates a save editor
-func ActivateBGAudio(r *Root, e *Editor) {
-	r.a = &BGAudioEditor{
-		e:    e,
-		t:    &Typer{
-			Placeholder: "BG Audio editor. Press enter to set BG audio",
-			C:           &e.c,
-		},
-	}
-}
-
-func (b *BGAudioEditor) Layout(outsideWidth, outsideHeight int) (screenWidth, screenHeight int) {
-	return b.e.Layout(outsideWidth, outsideHeight)
-}
-
-func (b *BGAudioEditor) Update(r *Root) error {
-	path, typ := b.t.Update()
-	if typ {
-		return nil
-	}
-	if path != "" {
-		b.e.l.BGAudio = &Audio{Path: path}
-		err := b.e.l.BGAudio.Load()
-		if err != nil {
-			b.t.Placeholder = fmt.Sprintf("Failed to load %v: %w", path, err)
-		} else {
-			b.t.Placeholder = fmt.Sprintf("Successfully loaded %v", path)
-		}
-	}
-	return b.e.Update(r)
-}
-
-func (b *BGAudioEditor) Draw(screen *ebiten.Image) {
-	b.e.Draw(screen)
-	b.t.Draw(screen)
-}
-
