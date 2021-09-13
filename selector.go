@@ -130,7 +130,15 @@ func (s *Selector) Update() {
 		cx, cy := s.C.Cursor()
 		if s.s != nil {
 			// still hitting?
-			if !s.hit(cx, cy, s.s.Transform()) && !s.hit(cx, cy, s.rotator()) {
+			hit := s.hit(cx, cy, s.s.Transform())
+			hit = hit && s.hit(cx, cy, s.rotator())
+			for _, m := range s.scalars() {
+				if s.hit(cx, cy, m) {
+					hit = true
+					break
+				}
+			}
+			if !hit {
 				s.s = nil
 			}
 		}
@@ -200,19 +208,21 @@ func (s *Selector) Update() {
 		t.Translate(wdx, wdy)
 		s.s.SetTransform(t)
 	case selscaling:
-		t := s.s.Transform()
-		cx, cy := t.Apply(0, 0)
 
 		scalar := s.scalars()[s.scalar]
 		sx, sy := scalar.Apply(0, 0)
-
 		mx, my := s.C.Cursor()
 
-		scalex := (sx - cx)/(mx - cx)
-		scaley := (sy - cy)/(my - cy)
+		t := s.s.Transform()
+		t.Invert()
+		usx, usy := t.Apply(sx, sy)
+		umx, umy := t.Apply(mx, my)
+
+		scalex := umx/usx
+		scaley := umy/usy
 		var m Mx
 		m.Scale(scalex, scaley)
-		m.Concat(t.GeoM)
+		m.Concat(s.s.Transform().GeoM)
 		s.s.SetTransform(m)
 	}
 }
