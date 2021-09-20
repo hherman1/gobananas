@@ -38,8 +38,10 @@ type Game struct {
 	// Number of evaluated ticks for timekeeping.
 	time int
 
-	// Audio players for this game.
-	aps []*audio.Player
+	bgAudio *Audio
+
+	// Functions to call on certain game events
+	Triggers map[string]Trigger
 }
 
 // Creates a new game with a default player and empty world
@@ -155,6 +157,9 @@ func (g *Game) Update() error {
 			if g.p.hasJump && g.time - g.p.lastJump > 30 {
 				g.p.b.ApplyForceToCenter(box2d.B2Vec2{0, 60*5}, true)
 				g.p.lastJump = g.time
+				if t, ok := g.Triggers["jump"]; ok {
+					t.Activate()
+				}
 			}
 			g.p.hasJump = false
 		}
@@ -164,6 +169,13 @@ func (g *Game) Update() error {
 		position := g.p.b.GetPosition()
 		g.c.x += 0.1 * (position.X - g.c.x)
 		g.c.y += 0.1 * (position.Y - g.c.y)
+	}
+	{
+		// Audio
+		if g.bgAudio != nil && !g.bgAudio.player.IsPlaying() {
+			_ = g.bgAudio.player.Seek(0)
+			g.bgAudio.player.Play()
+		}
 	}
 	{
 		// shooting
@@ -202,6 +214,11 @@ func (g *Game) Update() error {
 			e.b.ApplyForceToCenter(force, true)
 			force.OperatorScalarMulInplace(-10)
 			g.p.b.ApplyForceToCenter(force, true)
+
+			// Apply any triggers
+			if t, ok := g.Triggers["shoot"]; ok {
+				t.Activate()
+			}
 		}
 	}
 	g.world.Step(1.0/60., 16, 3)

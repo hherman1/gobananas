@@ -40,7 +40,8 @@ func NewEditor() *Editor {
 		// autosave is broken, reset level
 		geo := Mx{}
 		geo.Scale(100, 0.5)
-		e.l = Level{Blocks: []*Block{{T: geo}}}
+		e.l = NewLevel()
+		e.l.Blocks = []*Block{{T: geo}}
 	}
 	return &e
 }
@@ -108,8 +109,12 @@ func (a *Art) Load() error {
 type Audio struct {
 	// The file path for loading the audio
 	Path string
+	// A number between 0 and 1 indicating the volume to use for this audio. Default is 1
+	Volume *float64
 	// The decoded file for use as a player
 	decoded []byte
+	// The player for this audio, once loaded.
+	player *audio.Player
 }
 
 // Loads the audio player into the audio struct. Must be called before sending the audio to the game
@@ -119,6 +124,10 @@ func (a *Audio) Load() error {
 		return fmt.Errorf("load %v: %w", a.Path, err)
 	}
 	a.decoded = p
+	a.player = audio.NewPlayerFromBytes(Actx, a.decoded)
+	if a.Volume != nil {
+		a.player.SetVolume(*a.Volume)
+	}
 	return nil
 }
 
@@ -132,6 +141,38 @@ type Level struct {
 	Art []*Art `json:",omitempty"`
 	// Path to background audio which should play when game is running
 	BGAudio *Audio `json:",omitempty"`
+	// Functions to call on certain game events
+	Triggers map[string]Trigger
+}
+
+func NewLevel() Level {
+	var l Level
+	l.Triggers = make(map[string]Trigger)
+	return l
+}
+
+// A trigger is some function that is called when a certain game event happens, e.g a player jump.
+type Trigger struct {
+	// If set, when this trigger is called it will play the given audio once.
+	Audio *Audio
+}
+
+// Runs the actual trigger. Should only be called when the event its associated with happens.
+func (t Trigger) Activate() {
+	if t.Audio != nil  {
+		_ = t.Audio.player.Seek(0)
+		t.Audio.player.Play()
+	}
+}
+
+func (t *Trigger) Load() error {
+	if t.Audio != nil {
+		err := t.Audio.Load()
+		if err != nil {
+			return fmt.Errorf("load audio: %w", err)
+		}
+	}
+	return nil
 }
 
 // Saves the level design to the given path
@@ -152,7 +193,7 @@ func (l Level) save(path string) error {
 
 // Replaces a level with the one stored at the given path
 func (l *Level) load(path string) error {
-	*l = Level{}
+	*l = NewLevel()
 	f, err := os.Open(path)
 	if err != nil {
 		return fmt.Errorf("open file to load level: %w", err)
@@ -174,6 +215,13 @@ func (l *Level) load(path string) error {
 		if err != nil {
 			return fmt.Errorf("load bg audio: %w", err)
 		}
+	}
+	for n, t := range l.Triggers {
+		err := t.Load()
+		if err != nil {
+			return fmt.Errorf("load trigger '%v': %w", n, err)
+		}
+		l.Triggers[n] = t
 	}
 	return nil
 }
@@ -218,11 +266,9 @@ func (l Level) apply(g *Game) {
 		g.art = append(g.art, a)
 	}
 	if l.BGAudio != nil {
-		g.aps = append(g.aps, audio.NewPlayerFromBytes(Actx, l.BGAudio.decoded))
+		g.bgAudio = l.BGAudio
 	}
-	for _, a := range g.aps {
-		a.Play()
-	}
+	g.Triggers = l.Triggers
 }
 
 // Run a single tick of editing updates
@@ -291,7 +337,7 @@ func (e *Editor) Update(r *Root) error {
 	}
 	// reset
 	if Clicked(ebiten.KeyR) {
-		e.l = Level{}
+		e.l = NewLevel()
 		return nil
 	}
 	return nil
@@ -549,7 +595,7 @@ func (s *SaveAndLoadEditor) Update(r *Root) error {
 		if s.load {
 			err := s.e.l.load(path)
 			if err != nil {
-				return fmt.Errorf("failed to load %v: %w", err)
+				return fmt.Errorf("failed to load %v: %w", path, err)
 			}
 		} else {
 			err := s.e.l.save(path)
