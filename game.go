@@ -39,6 +39,7 @@ type Game struct {
 	time int
 
 	bgAudio *Audio
+	bgArt *Art
 
 	// Functions to call on certain game events
 	Triggers map[string]Trigger
@@ -244,6 +245,14 @@ func (g *Game) Draw(screen *ebiten.Image) {
 			"ScreenPixels": []float32{float32(g.c.sw)*2, float32(g.c.sh)*2},
 		},
 	})
+
+	if g.bgArt != nil {
+		var geo Mx
+		_, h := g.bgArt.img.Size()
+		scale := float64(g.c.sh) / float64(h)
+		geo.Scale(scale, scale)
+		screen.DrawImage(g.bgArt.img, &ebiten.DrawImageOptions{GeoM: geo.GeoM})
+	}
 
 	screen.DrawRectShader(int(g.p.w), int(g.p.h), mainShader, &ebiten.DrawRectShaderOptions{GeoM: geo.GeoM,
 		Uniforms: map[string]interface{}{

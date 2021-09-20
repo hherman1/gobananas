@@ -143,6 +143,9 @@
         "Path": "resources/Sanctuary 1.wav",
         "Volume": 0.2
     },
+    "BGArt": {
+        "Path": "resources/sky.png"
+    },
     "Triggers": {
         "shoot": {
             "Audio": {

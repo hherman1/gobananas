@@ -141,6 +141,8 @@ type Level struct {
 	Art []*Art `json:",omitempty"`
 	// Path to background audio which should play when game is running
 	BGAudio *Audio `json:",omitempty"`
+	// Art to display behind the camera at all times on this level. Transform is ignored.
+	BGArt *Art
 	// Functions to call on certain game events
 	Triggers map[string]Trigger
 }
@@ -210,6 +212,12 @@ func (l *Level) load(path string) error {
 			return fmt.Errorf("load %v: %w", a.Path, err)
 		}
 	}
+	if l.BGArt != nil {
+		err := l.BGArt.Load()
+		if err != nil {
+			return fmt.Errorf("load BG art %v: %w", l.BGArt.Path, err)
+		}
+	}
 	if l.BGAudio != nil {
 		err = l.BGAudio.Load()
 		if err != nil {
@@ -265,9 +273,8 @@ func (l Level) apply(g *Game) {
 	for _, a := range l.Art {
 		g.art = append(g.art, a)
 	}
-	if l.BGAudio != nil {
-		g.bgAudio = l.BGAudio
-	}
+	g.bgArt = l.BGArt
+	g.bgAudio = l.BGAudio
 	g.Triggers = l.Triggers
 }
 
@@ -363,6 +370,17 @@ func (e *Editor) drawBlock(screen *ebiten.Image, block *Block) {
 }
 
 func (e *Editor) Draw(screen *ebiten.Image) {
+	// bg art
+	if e.l.BGArt != nil {
+		var geo Mx
+		w, h := e.l.BGArt.img.Size()
+		geo.Translate(float64(-w)/2, -float64(h)/2)
+		scale := math.Max(float64(e.c.sh) / float64(h), float64(e.c.sw) / float64(w))
+		geo.Scale(scale, scale)
+		geo.Translate(float64(e.c.sw)/2, float64(e.c.sh)/2)
+		screen.DrawImage(e.l.BGArt.img, &ebiten.DrawImageOptions{GeoM: geo.GeoM})
+	}
+
 	for _, entity := range e.l.Blocks {
 		e.drawBlock(screen, entity)
 	}
@@ -375,6 +393,8 @@ Editors:
 		_, _ = fmt.Fprintf(&s, "(%v) %v\n", sub.key, sub.name)
 	}
 	ebitenutil.DebugPrintAt(screen, s.String(), 10, 5)
+
+
 
 	// player spawn
 	screenTransform := e.c.ToScreen()
