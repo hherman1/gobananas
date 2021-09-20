@@ -140,19 +140,19 @@
         }
     ],
     "BGAudio": {
-        "Path": "resources/BabyElephantWalk60.wav",
+        "Path": "resources/Sanctuary 1.wav",
         "Volume": 0.2
     },
     "Triggers": {
         "shoot": {
             "Audio": {
-                "Path": "resources/shoot.wav",
+                "Path": "resources/Burst!.wav",
                 "Volume": 0.5
             }
         },
         "jump": {
             "Audio": {
-                "Path": "resources/jump.wav",
+                "Path": "resources/Hop!.wav",
                 "Volume": 0.2
             }
         }
