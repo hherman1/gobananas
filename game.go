@@ -40,6 +40,8 @@ type Game struct {
 
 	bgAudio *Audio
 	bgArt *Art
+	// Player's art
+	pArt *Art
 
 	// Functions to call on certain game events
 	Triggers map[string]Trigger
@@ -246,6 +248,17 @@ func (g *Game) Draw(screen *ebiten.Image) {
 		},
 	})
 
+	// bg art
+	if g.bgArt != nil {
+		var geo Mx
+		w, h := g.bgArt.img.Size()
+		geo.Translate(float64(-w)/2, -float64(h)/2)
+		scale := math.Max(float64(g.c.sh) / float64(h), float64(g.c.sw) / float64(w))
+		geo.Scale(scale, scale)
+		geo.Translate(float64(g.c.sw)/2, float64(g.c.sh)/2)
+		screen.DrawImage(g.bgArt.img, &ebiten.DrawImageOptions{GeoM: geo.GeoM})
+	}
+
 	if g.bgArt != nil {
 		var geo Mx
 		_, h := g.bgArt.img.Size()
@@ -254,13 +267,25 @@ func (g *Game) Draw(screen *ebiten.Image) {
 		screen.DrawImage(g.bgArt.img, &ebiten.DrawImageOptions{GeoM: geo.GeoM})
 	}
 
-	screen.DrawRectShader(int(g.p.w), int(g.p.h), mainShader, &ebiten.DrawRectShaderOptions{GeoM: geo.GeoM,
-		Uniforms: map[string]interface{}{
-			"Vx": float32(velocity.X),
-			"Vy": float32(velocity.Y),
-			"ScreenPixels": []float32{float32(g.c.sw), float32(g.c.sh)},
-		},
-	})
+
+	// Player art
+	if g.pArt != nil {
+		var ageo Mx
+		w, h := g.bgArt.img.Size()
+		ageo.Scale(1/float64(w), -1/float64(h))
+		ageo.Translate(0, 1)
+		ageo.Scale(g.p.w, g.p.h)
+		ageo.Concat(geo.GeoM)
+		screen.DrawImage(g.bgArt.img, &ebiten.DrawImageOptions{GeoM: ageo.GeoM})
+	} else {
+		screen.DrawRectShader(int(g.p.w), int(g.p.h), mainShader, &ebiten.DrawRectShaderOptions{GeoM: geo.GeoM,
+			Uniforms: map[string]interface{}{
+				"Vx": float32(velocity.X),
+				"Vy": float32(velocity.Y),
+				"ScreenPixels": []float32{float32(g.c.sw), float32(g.c.sh)},
+			},
+		})
+	}
 
 	for _, e := range g.entities {
 		geo := Mx{}

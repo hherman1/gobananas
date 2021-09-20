@@ -146,6 +146,9 @@
     "BGArt": {
         "Path": "resources/sky.png"
     },
+    "PlayerArt": {
+        "Path": "resources/sky.png"
+    },
     "Triggers": {
         "shoot": {
             "Audio": {

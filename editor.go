@@ -143,6 +143,8 @@ type Level struct {
 	BGAudio *Audio `json:",omitempty"`
 	// Art to display behind the camera at all times on this level. Transform is ignored.
 	BGArt *Art
+	// Art to render over the character
+	PlayerArt *Art
 	// Functions to call on certain game events
 	Triggers map[string]Trigger
 }
@@ -212,6 +214,12 @@ func (l *Level) load(path string) error {
 			return fmt.Errorf("load %v: %w", a.Path, err)
 		}
 	}
+	if l.PlayerArt != nil {
+		err := l.PlayerArt.Load()
+		if err != nil {
+			return fmt.Errorf("load player art %v: %w", l.PlayerArt.Path, err)
+		}
+	}
 	if l.BGArt != nil {
 		err := l.BGArt.Load()
 		if err != nil {
@@ -275,6 +283,7 @@ func (l Level) apply(g *Game) {
 	}
 	g.bgArt = l.BGArt
 	g.bgAudio = l.BGAudio
+	g.pArt = l.PlayerArt
 	g.Triggers = l.Triggers
 }
 
